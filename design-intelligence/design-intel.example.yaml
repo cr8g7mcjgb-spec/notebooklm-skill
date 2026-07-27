@@ -1,0 +1,41 @@
+# Copy to design-intel.yaml. Every key can also be set as an env var with a
+# DI_ prefix (DI_STORE, DI_EMBEDDER, ...), which is how the container is configured.
+
+# --- storage -------------------------------------------------------------
+store: numpy            # numpy (zero-dep) | lancedb (local, scales) | qdrant (server/cloud)
+index_path: .design-index
+store_options: {}
+# store_options:        # for qdrant
+#   url: http://localhost:6333
+#   collection: design_references
+#   api_key: ${QDRANT_API_KEY}
+
+# --- models --------------------------------------------------------------
+# design-features : no torch, form-based descriptor, instant. Good default.
+# siglip2         : best general image/text tower; enables natural-language search.
+# openclip        : wider checkpoint zoo (DFN / LAION / DataComp).
+# colpali         : late-interaction, best-in-class retrieval, ~1k vectors per image.
+embedder: design-features
+embedder_options: {}
+# embedder_options:
+#   model: google/siglip2-so400m-patch14-384
+#   device: cuda
+
+# --- behaviour -----------------------------------------------------------
+collection: default
+cache_dir: .design-cache
+cache_enabled: true
+max_workers: 4
+analyzer_max_edge: 768
+zero_shot_weight: 0.35   # how much a text-capable embedder influences style calls
+
+# --- search fusion (reciprocal rank fusion) ------------------------------
+weight_image: 1.0
+weight_text: 0.7
+weight_style: 0.5
+weight_taste: 0.3
+rrf_k: 60
+
+# --- taste memory --------------------------------------------------------
+memory_path: .design-memory
+memory_enabled: true

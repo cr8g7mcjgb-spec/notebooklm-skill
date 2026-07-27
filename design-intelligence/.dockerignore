@@ -1,0 +1,12 @@
+.git
+.venv
+.di-venv
+__pycache__
+*.pyc
+.pytest_cache
+data/
+samples/
+.design-index/
+.design-cache/
+.design-memory/
+tests/

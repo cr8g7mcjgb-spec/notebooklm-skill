@@ -1,0 +1,9 @@
+data/
+samples/
+.design-index/
+.design-cache/
+.design-memory/
+design-intel.yaml
+*.egg-info/
+build/
+dist/

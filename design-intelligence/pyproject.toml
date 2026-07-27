@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "design-intel"
+version = "1.0.0"
+description = "Design Intelligence System — a design reasoning engine with vision retrieval, style extraction and an MCP server"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["design", "rag", "multimodal", "mcp", "vision", "siglip", "colpali"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Multimedia :: Graphics",
+    "Topic :: Scientific/Engineering :: Image Processing",
+]
+
+# The core install is deliberately tiny: analysis, taste memory, the
+# design-features embedder and the numpy store all run on just these two.
+dependencies = [
+    "numpy>=1.24",
+    "pillow>=10.0",
+]
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.2.0"]
+lancedb = ["lancedb>=0.13", "pyarrow>=14"]
+qdrant = ["qdrant-client>=1.9"]
+torch = ["torch>=2.1", "transformers>=4.45"]
+openclip = ["torch>=2.1", "open_clip_torch>=2.24"]
+colpali = ["torch>=2.1", "colpali-engine>=0.3.4", "transformers>=4.45"]
+yaml = ["pyyaml>=6.0"]
+dev = ["pytest>=7.4", "pytest-cov>=4.1", "ruff>=0.5"]
+# everything that runs without a GPU stack
+server = ["mcp>=1.2.0", "lancedb>=0.13", "pyarrow>=14", "pyyaml>=6.0"]
+
+[project.scripts]
+design-intel = "design_intel.cli:main"
+
+[project.entry-points."design_intel.embedders"]
+# third-party packages can register embedders here; see registry.py
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008"]

@@ -292,6 +292,29 @@ For multi-step research, Claude automatically asks follow-up questions when need
 
 ---
 
+## Also in this repository: Design Intelligence System
+
+[`design-intelligence/`](design-intelligence/) is a separate, self-contained skill + MCP server
+that does for *visual* references what this skill does for documents.
+
+It is a design **reasoning** engine rather than an image RAG: it indexes design references,
+measures each one (grid, type scale, palette, whitespace, composition), works out what a set of
+references actually agrees on, and emits that consensus as hard constraints and CSS design
+tokens — which is what raises the quality of generated visual work, since a retrieved thumbnail
+tells Claude nothing while it writes code.
+
+```bash
+pip install -e "design-intelligence[mcp]"
+design-intel index ~/design-refs
+design-intel brief "conference poster" --style swiss_international
+```
+
+Pluggable embedders (SigLIP2 / OpenCLIP / ColPali / a zero-dependency default), pluggable stores
+(numpy / LanceDB / Qdrant), incremental indexing, taste memory, 12 MCP tools, Docker deployment.
+See [`design-intelligence/README.md`](design-intelligence/README.md).
+
+---
+
 ## Limitations
 
 ### Skill-Specific

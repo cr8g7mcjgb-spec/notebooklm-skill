@@ -1,0 +1,54 @@
+# Local: `docker compose up design-intel` (embedded LanceDB, nothing else needed).
+# Team/cloud: `docker compose --profile cloud up` to add Qdrant and point the
+# engine at it — same image, same code path, only the store config changes.
+
+services:
+  design-intel:
+    build:
+      context: .
+      args:
+        BUILD_EXTRAS: ${BUILD_EXTRAS:-server}
+    image: design-intel:latest
+    volumes:
+      - ./data:/data                       # index + cache + taste memory
+      - ${REFERENCES:-./samples}:/references:ro
+    environment:
+      DI_STORE: ${DI_STORE:-lancedb}
+      DI_EMBEDDER: ${DI_EMBEDDER:-design-features}
+      DI_INDEX_PATH: /data/index
+      DI_CACHE_DIR: /data/cache
+      DI_MEMORY_PATH: /data/memory
+    stdin_open: true                       # required for the stdio MCP transport
+    tty: false
+
+  # HTTP transport, for when the MCP client is not on this machine
+  design-intel-http:
+    extends: design-intel
+    profiles: ["http"]
+    command: ["serve", "--transport", "http"]
+    ports:
+      - "${PORT:-8000}:8000"
+    stdin_open: false
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    profiles: ["cloud"]
+    volumes:
+      - ./data/qdrant:/qdrant/storage
+    ports:
+      - "6333:6333"
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/6333 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  design-intel-cloud:
+    extends: design-intel
+    profiles: ["cloud"]
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    environment:
+      DI_STORE: qdrant
+      DI_STORE_OPTIONS: '{"url": "http://qdrant:6333", "collection": "design_references"}'
