@@ -56,14 +56,35 @@ directions and picking wrong would waste the whole build.
 
 If `search` returns nothing, fall back to WebSearch: `site:styles.refero.design/style/ <query>`.
 
-### Step 3 — Pull the DESIGN.md, verbatim
+### Step 3 — Pull what the page publishes, verbatim
+
+A style page publishes the same design several ways: `Preview`, `DESIGN.md`,
+`Tailwind v4`, `CSS Variables`, `Design Tokens`. **Take the most
+implementation-ready one for the stack** — a published block needs no parsing, so there is
+no step in which a value can drift.
+
+```bash
+python3 refero-styles/scripts/refero_fetch.py fetch <slug> --asset all
+```
+
+| Project | Asset | Lands as |
+|---|---|---|
+| Tailwind v4 | `--asset tailwind` | the `@theme` block, used as-is |
+| Plain CSS / CSS modules | `--asset css` | the `:root` variables, used as-is |
+| CSS-in-JS / theme object | `--asset tokens` | the JSON, imported directly |
+| Custom component system, or a non-web deliverable (pptx, docx, poster) | `--asset design-md` | via Step 4 |
+
+Always pull `design-md` as well, even when a published block covers the tokens: the layout
+notes, component sizing, imagery direction and do/don't rules exist only there.
 
 ```bash
 python3 refero-styles/scripts/refero_fetch.py fetch <slug> \
-  --save design/refero-<slug>.DESIGN.md --full
+  --asset design-md --save design/refero-<slug>.DESIGN.md --full
 ```
 
 Read the saved file. It — not your memory of it — is the source of truth.
+
+See `references/public-extraction.md` when a page comes back partial.
 
 If plain HTTP is refused the script retries through a real browser; force with `--render`,
 and use this repo's venv interpreter when patchright is needed:
@@ -72,7 +93,10 @@ and use this repo's venv interpreter when patchright is needed:
 .venv/bin/python refero-styles/scripts/refero_fetch.py fetch <slug> --render
 ```
 
-### Step 4 — Turn it into tokens
+### Step 4 — Turn it into tokens (only if no published block fits)
+
+Skip this step when Step 3 already produced a usable `css`, `tailwind`, or `tokens` block —
+that output is better than anything derived here.
 
 ```bash
 python3 refero-styles/scripts/refero_tokens.py design/refero-<slug>.DESIGN.md --format css
@@ -122,22 +146,47 @@ Name the slug, the source URL, and the saved DESIGN.md path. Then state anything
 **not** apply verbatim and why — the only two acceptable reasons being a contrast pair
 that fails accessibility, or a value the document simply does not specify.
 
-## Accessibility — the one place fidelity yields
+Work through `references/application-checklist.md` before reporting done.
 
-Copy the values exactly, except where a foreground/background pair from the reference
-fails WCAG AA at its used size. Adjust the minimum necessary, keep every other value
-untouched, and say which pair you changed and to what. Focus states, hit targets, and
+## Guardrails
+
+**Tokens transfer everywhere; layout transfers only where the context matches.** A
+DESIGN.md is extracted from a marketing or product site. Its palette, type and spacing
+scale apply to anything. Its hero rhythm and decorative patterns do not belong on
+dashboards, tools, tables or forms — operational UI stays dense, scannable and
+task-focused, and keeps the product's own information architecture.
+
+**Accessibility is the one place fidelity yields.** Copy values exactly, except where a
+foreground/background pair fails WCAG AA at its used size. Adjust the minimum necessary,
+leave everything else untouched, and report the change. Focus states, hit targets, and
 reduced-motion handling survive regardless.
+
+**Fonts that cannot be loaded.** If the reference's family is unavailable to the app,
+choose the closest local or web-safe fallback and keep the reference's weights, sizes,
+letter-spacing and hierarchy. Name the substitution. Never silently drop to a system
+default.
+
+**Ownership.** Style principles and token values cross over. Logos, wordmarks, brand
+illustrations, and copy do not — unless the user owns or supplied them. Follow the imagery
+*direction*; do not lift imagery assets.
+
+**Claims.** These are public pages. Do not describe the result as using Refero MCP or any
+private Refero access unless an MCP server is actually configured in the session.
 
 ## Command reference
 
 | Command | Purpose |
 |---|---|
 | `refero_fetch.py search <query> [--limit N]` | Candidate style pages |
-| `refero_fetch.py fetch <slug\|url> [--save P] [--full]` | Extract one DESIGN.md |
+| `refero_fetch.py fetch <slug\|url> --asset <a>` | Published output: `design-md`, `css`, `tailwind`, `tokens`, `all` |
 | `refero_fetch.py probe` | Endpoint reachability (diagnostics) |
 | `refero_tokens.py <file> --format <fmt>` | css / tailwind / json / python / summary |
 | `--render` / `--show-browser` | Route through a real browser |
+
+## References
+
+- `references/public-extraction.md` — asset priority, and what to do when a page is partial
+- `references/application-checklist.md` — pre-ship verification of fidelity, fit and access
 
 Fetched documents cache to `~/.claude/skills/refero-styles/cache/` (`REFERO_CACHE_DIR`
 overrides). The cache is keyed by slug, so it never short-circuits Step 1 — a new request

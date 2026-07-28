@@ -39,16 +39,14 @@ except ImportError:
 mcp = FastMCP("refero-styles")
 
 
+def _load(style, asset="design-md", render=False):
+    """One published asset for a slug or URL, verbatim, or (None, None)."""
+    content, url, _log = refero_fetch.fetch_asset(style, asset, render=render)
+    return content, url
+
+
 def _load_markdown(style, render=False):
-    """The DESIGN.md for a slug or URL, verbatim, or None."""
-    for url in refero_fetch.slug_to_urls(style):
-        status, body, _via = refero_fetch.get(url, render=render)
-        if status != 200 or not body.strip():
-            continue
-        md = refero_fetch.extract_markdown(body, content_is_markdown=url.endswith(".md"))
-        if md:
-            return md, url
-    return None, None
+    return _load(style, "design-md", render=render)
 
 
 @mcp.tool()
@@ -103,9 +101,19 @@ def refero_tokens(style: str, format: str = "css", render: bool = False) -> str:
         render: force a real browser
 
     Values are carried across exactly as published — no rounding, no substitution.
+    The page's own CSS Variables / Tailwind v4 blocks are preferred when they
+    exist, since those need no re-parsing at all.
     """
     if format not in tokens_lib.EMITTERS:
         return f"Unknown format {format!r}. Choose one of: {', '.join(sorted(tokens_lib.EMITTERS))}"
+
+    # Published output beats anything derived from the markdown.
+    published = {"css": "css", "tailwind": "tailwind", "json": "tokens"}.get(format)
+    if published:
+        content, url = _load(style, published, render=render)
+        if content:
+            return f"/* source: {url} (published {published}) */\n{content}"
+
     md, url = _load_markdown(style, render=render)
     if not md:
         return f"Could not retrieve a DESIGN.md for {style!r}."
@@ -116,6 +124,29 @@ def refero_tokens(style: str, format: str = "css", render: bool = False) -> str:
             "Call refero_design_md and apply the document by hand."
         )
     return f"/* source: {url} */\n" + tokens_lib.EMITTERS[format](parsed)
+
+
+@mcp.tool()
+def refero_asset(style: str, asset: str = "css", render: bool = False) -> str:
+    """Fetch one of a style page's published outputs, verbatim and unparsed.
+
+    Args:
+        style: slug or full styles.refero.design URL
+        asset: design-md, css (CSS Variables), tailwind (Tailwind v4), or tokens (Design Tokens)
+        render: force a real browser
+
+    Prefer this over refero_tokens when the project can consume the published
+    block directly — there is no extraction step to go wrong.
+    """
+    if asset not in refero_fetch.ASSET_SCORERS:
+        return f"Unknown asset {asset!r}. Choose one of: {', '.join(sorted(refero_fetch.ASSET_SCORERS))}"
+    content, url = _load(style, asset, render=render)
+    if not content:
+        return (
+            f"{style!r} publishes no extractable {asset!r} block. "
+            "Try refero_design_md and derive it, or retry with render=True."
+        )
+    return f"{refero_fetch.comment_for(asset, url)}{content}"
 
 
 @mcp.tool()

@@ -146,8 +146,65 @@ def _markdown_score(text):
     return score
 
 
+def _css_score(text):
+    """A published `CSS Variables` block — already implementation-ready."""
+    if not text or len(text) < 80:
+        return 0
+    decls = len(re.findall(r"--[a-z0-9-]+\s*:\s*[^;\n]+;", text, re.IGNORECASE))
+    if decls < 4:
+        return 0
+    score = 40 * decls
+    if re.search(r":root\s*\{", text):
+        score += 300
+    if "<div" in text or "<script" in text:
+        score -= 1000
+    return score
+
+
+def _tailwind_score(text):
+    """A published `Tailwind v4` block: @theme / @import "tailwindcss"."""
+    if not text or len(text) < 80:
+        return 0
+    score = 0
+    if re.search(r"@theme\b", text):
+        score += 600
+    if re.search(r'@import\s+["\']tailwindcss', text):
+        score += 400
+    score += 30 * len(re.findall(r"--(?:color|font|text|spacing|radius|shadow)-[a-z0-9-]+\s*:",
+                                 text, re.IGNORECASE))
+    if score and ("<div" in text or "<script" in text):
+        score -= 1000
+    return score
+
+
+def _tokens_json_score(text):
+    """A published `Design Tokens` JSON blob."""
+    stripped = text.strip()
+    if not stripped.startswith("{") or len(stripped) < 80:
+        return 0
+    try:
+        data = json.loads(stripped)
+    except Exception:
+        return 0
+    flat = json.dumps(data).lower()
+    if not any(k in flat for k in ("color", "font", "spacing", "radius", "shadow")):
+        return 0
+    return 500 + min(len(stripped) // 10, 500)
+
+
+# The page publishes these ready-made; prefer them over re-parsing the markdown.
+ASSET_SCORERS = {
+    "design-md": _markdown_score,
+    "css": _css_score,
+    "tailwind": _tailwind_score,
+    "tokens": _tokens_json_score,
+}
+
+ASSET_EXT = {"design-md": "DESIGN.md", "css": "vars.css", "tailwind": "theme.css", "tokens": "tokens.json"}
+
+
 def _candidates_from_html(html):
-    """Every plausible markdown blob embedded in the page."""
+    """Every plausible embedded blob — markdown, CSS, or JSON."""
     out = []
 
     # 1. Next.js pages router payload.
@@ -155,7 +212,10 @@ def _candidates_from_html(html):
         r'<script[^>]+id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL
     ):
         try:
-            out.extend(_walk_json(json.loads(m.group(1))))
+            data = json.loads(m.group(1))
+            out.extend(_walk_json(data))
+            # Design Tokens may be a nested object rather than a string blob.
+            out.extend(_json_subtrees(data))
         except Exception:
             pass
 
@@ -179,7 +239,9 @@ def _candidates_from_html(html):
 def _walk_json(node, acc=None):
     acc = [] if acc is None else acc
     if isinstance(node, str):
-        if len(node) > 200:
+        # 80 is the shortest asset worth scoring (a small CSS variables block);
+        # scoring, not this threshold, is what rejects noise.
+        if len(node) > 80:
             acc.append(node)
     elif isinstance(node, dict):
         for v in node.values():
@@ -187,6 +249,23 @@ def _walk_json(node, acc=None):
     elif isinstance(node, list):
         for v in node:
             _walk_json(v, acc)
+    return acc
+
+
+def _json_subtrees(node, depth=0, acc=None):
+    """Serialized dict nodes that look like a design-token tree."""
+    acc = [] if acc is None else acc
+    if depth > 6 or len(acc) > 40:
+        return acc
+    if isinstance(node, dict):
+        keys = " ".join(str(k).lower() for k in node)
+        if any(k in keys for k in ("color", "font", "spacing", "radius", "shadow", "typography")):
+            acc.append(json.dumps(node, indent=2, ensure_ascii=False))
+        for v in node.values():
+            _json_subtrees(v, depth + 1, acc)
+    elif isinstance(node, list):
+        for v in node[:20]:
+            _json_subtrees(v, depth + 1, acc)
     return acc
 
 
@@ -200,62 +279,118 @@ def _strip_tags(fragment):
     return text
 
 
-def extract_markdown(body, content_is_markdown=False):
-    """Pick the best DESIGN.md candidate out of a response body."""
-    if content_is_markdown or ("<html" not in body[:2000].lower() and _markdown_score(body) > 300):
+def extract_asset(body, asset="design-md", content_is_raw=False):
+    """Pick the best candidate of one asset type out of a response body.
+
+    A Refero style page publishes DESIGN.md, CSS Variables, Tailwind v4 and
+    Design Tokens side by side; each is scored on its own terms so the CSS block
+    is never mistaken for the markdown or vice versa.
+    """
+    scorer = ASSET_SCORERS[asset]
+    if content_is_raw or ("<html" not in body[:2000].lower() and scorer(body) > 300):
         return body.strip()
     best, best_score = None, 0
     for cand in _candidates_from_html(body):
-        score = _markdown_score(cand)
+        score = scorer(cand)
         if score > best_score:
             best, best_score = cand, score
     return best.strip() if best and best_score >= 300 else None
+
+
+def extract_markdown(body, content_is_markdown=False):
+    """Back-compat wrapper: the DESIGN.md specifically."""
+    return extract_asset(body, "design-md", content_is_raw=content_is_markdown)
 
 
 # --------------------------------------------------------------------------
 # Commands
 # --------------------------------------------------------------------------
 
-def slug_to_urls(target):
-    """Candidate URLs for one style, cheapest/most-likely first."""
+def page_url(target):
     if target.startswith("http://") or target.startswith("https://"):
-        page = target.rstrip("/")
-    else:
-        page = f"{BASE}/style/{target.strip().strip('/')}"
-    return [f"{page}.md", f"{page}/design.md", f"{page}/DESIGN.md", page]
+        return target.rstrip("/")
+    return f"{BASE}/style/{target.strip().strip('/')}"
 
 
-def cmd_fetch(args):
+def slug_to_urls(target, asset="design-md"):
+    """Candidate URLs for one asset, cheapest/most-likely first.
+
+    Direct file URLs are tried before the page itself: if the site serves the
+    asset as a file, that copy is authoritative and needs no extraction.
+    """
+    page = page_url(target)
+    direct = {
+        "design-md": [f"{page}.md", f"{page}/design.md", f"{page}/DESIGN.md"],
+        "css": [f"{page}/variables.css", f"{page}/vars.css", f"{page}.css"],
+        "tailwind": [f"{page}/tailwind.css", f"{page}/theme.css"],
+        "tokens": [f"{page}/tokens.json", f"{page}.json"],
+    }[asset]
+    return direct + [page]
+
+
+def comment_for(asset, url):
+    if asset == "design-md":
+        return f"<!-- source: {url} -->\n\n"
+    if asset == "tokens":
+        return ""  # JSON takes no comment
+    return f"/* source: {url} */\n"
+
+
+def fetch_asset(target, asset, render=False, show_browser=False):
+    """(content, url, via) for one asset, or (None, None, attempts-log)."""
     tried = []
-    for url in slug_to_urls(args.target):
-        status, body, via = get(url, render=args.render, show_browser=args.show_browser)
+    for url in slug_to_urls(target, asset):
+        status, body, via = get(url, render=render, show_browser=show_browser)
         tried.append(f"  {status:>3} {via:<6} {url}")
         if status != 200 or not body.strip():
             continue
-        md = extract_markdown(body, content_is_markdown=url.endswith(".md"))
-        if not md:
+        is_direct = not url.rstrip("/").endswith(page_url(target).rstrip("/"))
+        content = extract_asset(body, asset, content_is_raw=is_direct and _looks_raw(body))
+        if content:
+            return content, url, via
+    return None, None, "\n".join(tried)
+
+
+def _looks_raw(body):
+    return "<html" not in body[:2000].lower()
+
+
+def cmd_fetch(args):
+    assets = list(ASSET_SCORERS) if args.asset == "all" else [args.asset]
+    slug = re.sub(r"[^a-z0-9._-]+", "-", args.target.rstrip("/").split("/")[-1].lower()) or "style"
+    ok = False
+
+    for asset in assets:
+        content, url, log = fetch_asset(
+            args.target, asset, render=args.render, show_browser=args.show_browser
+        )
+        if not content:
+            if args.asset != "all":
+                print(f"Could not extract '{asset}'. Attempts:", file=sys.stderr)
+                print(log, file=sys.stderr)
+                if not args.render:
+                    print("\nRetry with --render to let a real browser hydrate the page.",
+                          file=sys.stderr)
+                return 1
+            print(f"[{asset}] not found", file=sys.stderr)
             continue
 
-        slug = re.sub(r"[^a-z0-9._-]+", "-", args.target.rstrip("/").split("/")[-1].lower())
-        if args.save:
+        ok = True
+        if args.save and args.asset != "all":
             out = Path(args.save)
         else:
-            out = CACHE_DIR / f"{slug or 'style'}.DESIGN.md"
+            out = CACHE_DIR / f"{slug}.{ASSET_EXT[asset]}"
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(f"<!-- source: {url} -->\n\n{md}\n", encoding="utf-8")
+        out.write_text(comment_for(asset, url) + content + "\n", encoding="utf-8")
 
-        print(f"source: {url}  (via {via})")
-        print(f"saved:  {out}")
-        print(f"length: {len(md)} chars")
-        print("---")
-        print(md if args.full else md[:4000] + ("\n… (truncated, use --full)" if len(md) > 4000 else ""))
-        return 0
+        print(f"[{asset}] source: {url}")
+        print(f"[{asset}] saved:  {out}  ({len(content)} chars)")
+        if args.asset != "all":
+            print("---")
+            print(content if args.full
+                  else content[:4000] + ("\n… (truncated, use --full)" if len(content) > 4000 else ""))
 
-    print("Could not extract a DESIGN.md. Attempts:", file=sys.stderr)
-    print("\n".join(tried), file=sys.stderr)
-    if not args.render:
-        print("\nRetry with --render to let a real browser hydrate the page.", file=sys.stderr)
-    return 1
+    return 0 if ok else 1
 
 
 def cmd_search(args):
@@ -333,9 +468,15 @@ def main():
     p.add_argument("--limit", type=int, default=10)
     p.set_defaults(func=cmd_search)
 
-    p = sub.add_parser("fetch", parents=[common], help="extract one style's DESIGN.md")
+    p = sub.add_parser("fetch", parents=[common], help="extract a style's published assets")
     p.add_argument("target", help="slug (linear) or full URL")
-    p.add_argument("--save", help="write to this path instead of the cache")
+    p.add_argument(
+        "--asset",
+        choices=sorted(ASSET_SCORERS) + ["all"],
+        default="design-md",
+        help="which published output to take: design-md, css, tailwind, tokens, or all",
+    )
+    p.add_argument("--save", help="write to this path instead of the cache (single asset only)")
     p.add_argument("--full", action="store_true", help="print the whole document")
     p.set_defaults(func=cmd_fetch)
 

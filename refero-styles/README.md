@@ -51,10 +51,18 @@ Directly:
 
 ```bash
 python3 scripts/refero_fetch.py search "minimal editorial"
-python3 scripts/refero_fetch.py fetch linear --save design/refero-linear.DESIGN.md
+python3 scripts/refero_fetch.py fetch linear --asset all
+python3 scripts/refero_fetch.py fetch linear --asset design-md --save design/refero-linear.DESIGN.md
 python3 scripts/refero_tokens.py design/refero-linear.DESIGN.md --format css
 python3 scripts/refero_fetch.py probe            # diagnostics
 ```
+
+A style page publishes the same design several ways — `DESIGN.md`, `CSS Variables`,
+`Tailwind v4`, `Design Tokens`. **Take the published block when one fits the stack**
+(`--asset css` / `tailwind` / `tokens`): it is already implementation-ready, so there is no
+parsing step in which a value can drift. `refero_tokens.py` is the fallback for custom
+component systems and non-web deliverables — and the DESIGN.md is still worth pulling
+either way, since layout notes, component sizing and do/don't rules live only there.
 
 `refero_tokens.py` emits `css` (`:root` variables), `tailwind` (v4 `@theme`), `json`,
 `python` (a dict for python-pptx / python-docx / matplotlib), or `summary` (what was
@@ -74,7 +82,8 @@ pip install "mcp[cli]"
 claude mcp add refero-styles -- python /abs/path/refero-styles/mcp/refero_mcp_server.py
 ```
 
-Tools: `refero_search`, `refero_design_md` (verbatim document), `refero_tokens`
+Tools: `refero_search`, `refero_design_md` (verbatim document), `refero_asset` (published
+css / tailwind / tokens block), `refero_tokens`
 (css/tailwind/json/python), `refero_probe` (reachability).
 
 ## How it finds things
@@ -83,10 +92,12 @@ Refero publishes no documented API, so nothing is hardcoded to one URL shape:
 
 1. **search** — `/?q=`, `/search?q=`, `/api/search?q=`, then `sitemap.xml` / `llms.txt`
    filtered by the query terms, then WebSearch as a last resort.
-2. **fetch** — `<page>.md`, `<page>/design.md`, `<page>/DESIGN.md`, then the HTML page,
-   extracting markdown from `__NEXT_DATA__`, app-router flight payloads, long escaped
-   inline-script strings, `<pre>`/`<code>`, and clipboard attributes — scoring candidates
-   so page chrome never wins.
+2. **fetch** — direct file URLs for the requested asset first (`<page>.md`,
+   `<page>/variables.css`, `<page>/tokens.json`, …), then the HTML page, extracting from
+   `__NEXT_DATA__`, app-router flight payloads, nested token objects, long escaped
+   inline-script strings, `<pre>`/`<code>`, and clipboard attributes. Each asset type is
+   scored on its own terms, so the CSS block is never mistaken for the markdown and page
+   chrome never wins.
 3. On `403` or refusal, replays through a real browser.
 
 `probe` tells you which layer broke when the site changes.
