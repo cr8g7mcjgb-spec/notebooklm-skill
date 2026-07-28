@@ -25,6 +25,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -390,57 +391,92 @@ def cmd_fetch(args):
 
         print(f"[{asset}] source: {url}")
         print(f"[{asset}] saved:  {out}  ({len(content)} chars)")
-        if args.asset != "all":
+        # Content is written to disk, not echoed. Printing it would spend the
+        # agent's context on a document it can read from the file when it needs to.
+        if args.full:
             print("---")
-            print(content if args.full
-                  else content[:4000] + ("\n… (truncated, use --full)" if len(content) > 4000 else ""))
+            print(content)
+        elif args.print_chars:
+            print("---")
+            print(content[: args.print_chars]
+                  + ("\n… (truncated, use --full)" if len(content) > args.print_chars else ""))
 
     return 0 if ok else 1
 
 
 def cmd_search(args):
+    """Slug-level lookup.
+
+    The site's `?q=` parameter is not reliably a filter — it can return the
+    unfiltered first page. So every candidate is ranked locally against the query
+    regardless of where it came from; that is correct whether the endpoint filters
+    or ignores the parameter. For matching on document *content* rather than slug
+    spelling, use refero_index.py find.
+    """
     query = " ".join(args.query).strip()
     encoded = urllib.parse.quote_plus(query)
-    found, notes = [], []
+    terms = [t for t in re.split(r"[^a-z0-9]+", query.lower()) if t]
+    candidates, notes = [], []
 
-    for url in (
-        f"{BASE}/?q={encoded}",
-        f"{BASE}/search?q={encoded}",
-        f"{BASE}/api/search?q={encoded}",
-    ):
-        status, body, via = get(url, render=args.render, show_browser=args.show_browser)
-        notes.append(f"  {status:>3} {via:<6} {url}")
+    def collect(text):
+        for slug in SLUG_RE.findall(text):
+            if slug.lower() not in {c.lower() for c in candidates}:
+                candidates.append(slug)
+
+    # A query endpoint, if it happens to filter; harmless if it ignores the param.
+    status, body, via = get(f"{BASE}/?q={encoded}", render=args.render,
+                            show_browser=args.show_browser)
+    notes.append(f"  {status:>3} {via:<6} {BASE}/?q={encoded}")
+    if status == 200 and body.strip():
+        collect(body)
+
+    # Sitemaps enumerate every style page.
+    for url in (f"{BASE}/sitemap.xml", f"{BASE}/sitemap-0.xml", f"{BASE}/llms.txt"):
+        status, body = http_get(url)
+        notes.append(f"  {status:>3} http   {url}")
         if status == 200 and body.strip():
-            for slug in SLUG_RE.findall(body):
-                if slug.lower() not in [f.lower() for f in found]:
-                    found.append(slug)
-        if len(found) >= args.limit:
-            break
+            collect(body)
 
-    # The sitemap is the reliable fallback: it lists every style page.
-    if len(found) < args.limit:
-        for url in (f"{BASE}/sitemap.xml", f"{BASE}/sitemap-0.xml", f"{BASE}/llms.txt"):
-            status, body = http_get(url)
-            notes.append(f"  {status:>3} http   {url}")
-            if status != 200 or not body.strip():
-                continue
-            terms = [t for t in re.split(r"[^a-z0-9]+", query.lower()) if t]
-            for slug in SLUG_RE.findall(body):
-                low = slug.lower()
-                if terms and not any(t in low for t in terms):
-                    continue
-                if low not in [f.lower() for f in found]:
-                    found.append(slug)
-            if found:
-                break
+    # Paginated listings, for anything the sitemaps miss.
+    page = 1
+    while page <= 20:
+        before = len(candidates)
+        status, body, _via = get(f"{BASE}/?page={page}")
+        if status != 200 or not body.strip():
+            break
+        collect(body)
+        if len(candidates) == before:
+            break
+        page += 1
+        time.sleep(0.25)
+
+    if terms:
+        scored = []
+        for slug in candidates:
+            low = slug.lower()
+            hits = sum(1 for t in terms if t in low)
+            if hits:
+                scored.append((hits, -len(slug), slug))
+        found = [s for _h, _l, s in sorted(scored, reverse=True)]
+    else:
+        found = candidates
 
     if not found:
         print("No style pages found. Endpoints tried:", file=sys.stderr)
         print("\n".join(notes), file=sys.stderr)
-        print(
-            "\nFall back to a web search for:  site:styles.refero.design/style/ " + query,
-            file=sys.stderr,
-        )
+        if candidates:
+            print(
+                f"\n{len(candidates)} styles were listed, none whose slug matches "
+                f"{query!r}. Slugs rarely carry mood words — build an index and search "
+                "contents instead:\n  python3 refero_index.py crawl --limit 500\n"
+                f"  python3 refero_index.py find {query!r}",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                "\nFall back to a web search for:  site:styles.refero.design/style/ " + query,
+                file=sys.stderr,
+            )
         return 1
 
     for slug in found[: args.limit]:
@@ -482,7 +518,10 @@ def main():
         help="which published output to take: design-md, css, tailwind, tokens, or all",
     )
     p.add_argument("--save", help="write to this path instead of the cache (single asset only)")
-    p.add_argument("--full", action="store_true", help="print the whole document")
+    p.add_argument("--full", action="store_true",
+                   help="also echo the whole document (costs context — usually unnecessary)")
+    p.add_argument("--print", dest="print_chars", type=int, metavar="N",
+                   help="echo only the first N characters")
     p.set_defaults(func=cmd_fetch)
 
     p = sub.add_parser("probe", parents=[common], help="report which endpoints are reachable")

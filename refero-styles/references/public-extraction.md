@@ -40,12 +40,21 @@ Symptoms and what each one means:
 
 ## Finding the right page
 
+Prefer `refero_index.py find` — it matches document contents. `refero_fetch.py search`
+matches slug spelling only, which works for brand names and almost never for moods.
+
 ```bash
-python3 scripts/refero_fetch.py search "<brand or mood>"
+python3 scripts/refero_index.py find "<mood, font name, or hex>"
+python3 scripts/refero_fetch.py search "<brand>"
 ```
 
-`search` tries the site's query endpoints, then falls back to `sitemap.xml` / `llms.txt`
-filtered by the query terms. If it returns nothing, use WebSearch:
+**The site's `?q=` parameter cannot be trusted as a filter.** Independent reverse
+engineering of the site (see Prior art) found `?search=`, `?q=` and `?colorScheme=` are
+accepted and silently ignored, with `?page=N` being the only real pagination. So `search`
+ranks every candidate locally against the query no matter which endpoint produced it —
+correct whether the parameter filters or not. Never treat a `?q=` response as pre-filtered.
+
+If nothing is found, use WebSearch:
 
 ```
 site:styles.refero.design/style/ <brand> Refero Styles
@@ -72,6 +81,19 @@ Check that you have all of these before building; a gap here becomes an invented
 
 Anything genuinely absent from the page is a decision you make, and it must be reported as
 yours rather than presented as part of the reference.
+
+## Prior art
+
+Other people have solved parts of this. What was taken from each, and what was not:
+
+| Project | Useful finding | Taken? |
+|---|---|---|
+| [lorecraft-io/refero-design-mcp](https://github.com/lorecraft-io/refero-design-mcp) | `?q=`/`?search=` are silently ignored; `?page=N` is the real pagination; mirror the catalog once and rank client-side | Yes — this is why `search` ranks locally and why the crawler exists |
+| [lorecraft-io/refero-design-mcp](https://github.com/lorecraft-io/refero-design-mcp) | Semantic ranking via OpenAI `text-embedding-3-small`, BM25-lite fallback without a key | **No** — keyword ranking only. No API keys, no paid services, no third-party calls |
+| [faridjafarlee/refero-styles-mcp-server](https://github.com/faridjafarlee/refero-styles-mcp-server) | Same catalog behind MCP tools | Convergent with `mcp/refero_mcp_server.py` |
+| [zotanika/refero-styles-index](https://github.com/zotanika/refero-styles-index) | Index for selection, then read the live DESIGN.md from the winner's URL | Yes — "the index selects, it never supplies" |
+| [VoltAgent/awesome-design-md](https://github.com/VoltAgent/awesome-design-md) | ~73 DESIGN.md files in a public repo under `design-md/`, MIT | Noted as a fallback corpus — plain files over `raw.githubusercontent.com`, no API. Paths are **not** hardcoded here because they were not verified against the repo tree; check the layout before relying on it |
+| [dembrandt](https://github.com/dembrandt/dembrandt), [design-extract](https://github.com/Manavarya09/design-extract) | Extract tokens from *any* site's live DOM with Playwright | Different problem — those derive a design system; this one reads a curated, already-published one |
 
 ## Never fill a gap by guessing
 

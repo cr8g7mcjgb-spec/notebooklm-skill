@@ -169,6 +169,10 @@ def extract_type_scale(sections):
             if not sizes:
                 continue
             label = re.match(rf"^\s*(?:[-*+|]\s*)?({LABEL_CHARS}?)\s*[:|—–-]", line)
+            # An unlabelled size inside a prose sentence ("tracking tightens above
+            # 40px") is not a scale step. Require a list/table/declaration line.
+            if not label and not re.match(r"^\s*(?:[-*+|]|--[a-z])", line):
+                continue
             lh = re.search(r"/\s*([\d.]+)|line[- ]height\s*[:=]?\s*([\d.]+)", line, re.IGNORECASE)
             leading = (lh.group(1) or lh.group(2)) if lh else ""
             if not leading:
@@ -288,7 +292,37 @@ def emit_summary(t):
     return "\n".join(out)
 
 
+def emit_brief(t):
+    """A compact design brief — the cheap thing to hold in context.
+
+    A DESIGN.md runs several thousand characters, most of it prose that repeats
+    what the tokens already say. This is the same design in ~15 lines: enough to
+    build from, with the full document left on disk for the details.
+    """
+    lines = []
+    if t["colors"]:
+        lines.append("COLORS  " + "  ".join(f"{k}={v}" for k, v in t["colors"].items()))
+    if t["fonts"]:
+        lines.append("FONTS   " + "  |  ".join(f"{k}: {v}" for k, v in t["fonts"].items()))
+    if t["type_scale"]:
+        lines.append("TYPE    " + "  ".join(
+            f"{s['label'] or '?'}={s['size']}" + (f"/{s['line_height']}" if s["line_height"] else "")
+            for s in t["type_scale"]))
+    if t["spacing"]:
+        lines.append("SPACING " + " ".join(t["spacing"]))
+    if t["radius"]:
+        lines.append("RADIUS  " + " ".join(t["radius"]))
+    for i, s in enumerate(t["shadows"]):
+        lines.append(f"SHADOW{i + 1} {s}")
+    if t["sections"]:
+        lines.append("SECTIONS " + ", ".join(t["sections"]))
+    lines.append("NOTE    layout, components, imagery and do/don't rules are in the "
+                 "DESIGN.md — read it only if the build needs them")
+    return "\n".join(lines)
+
+
 EMITTERS = {
+    "brief": emit_brief,
     "css": emit_css,
     "tailwind": emit_tailwind,
     "json": lambda t: json.dumps(t, indent=2, ensure_ascii=False),

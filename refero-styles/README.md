@@ -139,6 +139,33 @@ on the same host hits the same proxy, so it is not a workaround. Run from a mach
 normal network access, or open the environment's network policy. A site-side WAF block is
 a different problem, and `--render` does solve that one.
 
+## Cost and dependencies
+
+No API keys, no paid services, no third-party endpoints. Plain HTTPS to a public site,
+Python stdlib only; a browser is used only when a fetch is refused. Other Refero tools rank
+with OpenAI embeddings — this one ranks with keywords precisely so it needs no key.
+
+Context cost was measured on a realistic 3KB DESIGN.md:
+
+| Path | Cost |
+|---|---|
+| `fetch` (default — writes to disk, prints a path) | ~8 tokens |
+| `--format brief` — the whole design in ~15 lines | ~170 tokens |
+| `--format css` — the token block | ~195 tokens |
+| `fetch --full` — the entire document | ~765 tokens |
+
+So build from `brief` plus the emitted CSS, and open the saved DESIGN.md only for the
+layout, component or do/don't detail. Crawling is a one-time cost paid outside the
+conversation; `find` afterwards prints a single line.
+
+## Prior art
+
+`references/public-extraction.md` records what was borrowed from existing projects and what
+was deliberately not. The load-bearing find:
+[lorecraft-io/refero-design-mcp](https://github.com/lorecraft-io/refero-design-mcp)
+established that `?q=`/`?search=` are accepted and silently ignored — so a query response is
+never pre-filtered, and every candidate is ranked locally regardless of origin.
+
 ## Caveats
 
 - Extraction is heuristic. Skim the saved DESIGN.md before it ships.

@@ -113,12 +113,20 @@ and use this repo's venv interpreter when patchright is needed:
 .venv/bin/python refero-styles/scripts/refero_fetch.py fetch <slug> --render
 ```
 
+**Keep it out of context.** `fetch` writes to disk and prints only the path — that is
+deliberate. A DESIGN.md is several thousand characters of prose that mostly restates its own
+tokens. Do not `--full` it. Work from the brief in Step 4, and open the saved file only when
+the build actually needs the layout, component or do/don't detail.
+
 ### Step 4 — Turn it into tokens (only if no published block fits)
 
 Skip this step when Step 3 already produced a usable `css`, `tailwind`, or `tokens` block —
 that output is better than anything derived here.
 
 ```bash
+# start here — the whole design in ~15 lines, ~80% cheaper than the document
+python3 refero-styles/scripts/refero_tokens.py design/refero-<slug>.DESIGN.md --format brief
+
 python3 refero-styles/scripts/refero_tokens.py design/refero-<slug>.DESIGN.md --format css
 #   --format tailwind   Tailwind v4 @theme block
 #   --format json       structured tokens
@@ -205,6 +213,21 @@ private Refero access unless an MCP server is actually configured in the session
 | `refero_fetch.py probe` | Endpoint reachability (diagnostics) |
 | `refero_tokens.py <file> --format <fmt>` | css / tailwind / json / python / summary |
 | `--render` / `--show-browser` | Route through a real browser |
+
+## Cost discipline
+
+The expensive mistake is pulling documents into context that the build never reads.
+
+| Step | Cheap way | Costly way |
+|---|---|---|
+| Choose a style | `refero_index.py find` → one `slug<TAB>url` line | Fetching several candidates to compare |
+| Get the design | `fetch` (writes to disk, prints a path) | `fetch --full` |
+| Build from it | `--format brief`, plus the emitted `css` file | Reading the whole DESIGN.md |
+| Need a specific rule | Read just that section of the saved file | Re-reading the document |
+
+Crawling is a one-time cost paid outside the conversation; `find` afterwards is a single
+line of output. There are no API keys, no paid services, and no third-party endpoints —
+plain HTTPS to a public site, stdlib only, with a browser used only when a fetch is refused.
 
 ## References
 
