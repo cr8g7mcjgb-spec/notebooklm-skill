@@ -311,6 +311,42 @@ def extract_markdown(body, content_is_markdown=False):
 # Commands
 # --------------------------------------------------------------------------
 
+UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
+
+
+def resolve(target):
+    """Turn a brand name into the UUID the site actually uses.
+
+    Style URLs are /style/<uuid> — the slug carries no brand name at all, so
+    "linear" cannot be turned into a URL by string manipulation. The crawled
+    index holds the name→uuid mapping harvested from the listing pages.
+    """
+    t = target.strip().strip("/")
+    if t.startswith("http://") or t.startswith("https://") or UUID_RE.match(t):
+        return t, None
+
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import refero_index
+        index = refero_index.load_index()
+    except Exception:
+        index = []
+    if not index:
+        return t, (
+            f"{target!r} is not a UUID, and style URLs are /style/<uuid> — the slug "
+            "carries no brand name. Build the index so names can be resolved:\n"
+            "  python3 refero_index.py crawl --limit 500"
+        )
+
+    low = t.lower()
+    exact = [e for e in index if e.get("name", "").lower() == low]
+    partial = [e for e in index if low in e.get("name", "").lower()] if not exact else []
+    hit = (exact or partial)
+    if not hit:
+        return t, f"No indexed style named {target!r}. Try: refero_index.py find {target!r}"
+    return hit[0]["slug"], None
+
+
 def page_url(target):
     if target.startswith("http://") or target.startswith("https://"):
         return target.rstrip("/")
@@ -362,13 +398,21 @@ def _looks_raw(body):
 
 
 def cmd_fetch(args):
+    target, problem = resolve(args.target)
+    if problem:
+        print(problem, file=sys.stderr)
+        return 1
+    if target != args.target:
+        print(f"resolved {args.target!r} -> {target}", file=sys.stderr)
+
     assets = list(ASSET_SCORERS) if args.asset == "all" else [args.asset]
+    # Name the files after what the user asked for, not the uuid.
     slug = re.sub(r"[^a-z0-9._-]+", "-", args.target.rstrip("/").split("/")[-1].lower()) or "style"
     ok = False
 
     for asset in assets:
         content, url, log = fetch_asset(
-            args.target, asset, render=args.render, show_browser=args.show_browser
+            target, asset, render=args.render, show_browser=args.show_browser
         )
         if not content:
             if args.asset != "all":

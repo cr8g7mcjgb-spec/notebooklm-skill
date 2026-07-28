@@ -67,21 +67,62 @@ def robots_checker():
 # Discovery
 # --------------------------------------------------------------------------
 
-def discover_slugs(limit=None, verbose=True):
-    """Every style slug the site exposes, in discovery order."""
-    slugs, seen = [], set()
+# Style URLs are /style/<uuid> — the slug carries no brand name, so the listing
+# pages are the only place the name and tagline exist. Harvest them together.
+ANCHOR_RE = re.compile(
+    r'<a[^>]+href="(?:https?://[^"]*)?/style/([0-9a-fA-F][0-9a-fA-F-]{7,})"[^>]*>(.*?)</a>',
+    re.IGNORECASE | re.DOTALL,
+)
 
-    def take(text):
+
+def discover_entries(limit=None, verbose=True):
+    """[{slug, name, tagline}] for every style the site lists."""
+    entries, seen = [], set()
+
+    def add(slug, name="", tagline=""):
+        low = slug.lower()
+        if low in seen:
+            # A later page may supply the name a sitemap entry lacked.
+            if name:
+                for e in entries:
+                    if e["slug"].lower() == low and not e["name"]:
+                        e["name"], e["tagline"] = name, tagline
+            return
+        seen.add(low)
+        entries.append({"slug": slug, "name": name, "tagline": tagline})
+
+    def take_anchors(html):
+        for slug, inner in ANCHOR_RE.findall(html):
+            lines = [ln.strip() for ln in rf._strip_tags(inner).splitlines() if ln.strip()]
+            add(slug, lines[0] if lines else "", " ".join(lines[1:3]))
+
+    def take_slugs(text):
         for slug in rf.SLUG_RE.findall(text):
-            low = slug.lower()
-            if low not in seen:
-                seen.add(low)
-                slugs.append(slug)
+            add(slug)
 
-    # Sitemaps, including a sitemap index pointing at child sitemaps.
     queue = [f"{rf.BASE}/sitemap.xml", f"{rf.BASE}/sitemap-0.xml", f"{rf.BASE}/llms.txt"]
     visited = set()
-    while queue and (limit is None or len(slugs) < limit):
+
+    # Listing pages first — they are the only source of names and taglines.
+    page = 1
+    while limit is None or len(entries) < limit:
+        before = len(entries)
+        status, body, _via = rf.get(f"{rf.BASE}/?page={page}")
+        if status != 200 or not body.strip():
+            break
+        take_anchors(body)
+        take_slugs(body)
+        if len(entries) == before:
+            break
+        if verbose:
+            print(f"  page {page}: {len(entries)} styles so far", file=sys.stderr)
+        page += 1
+        if page > 100:
+            break
+        time.sleep(0.25)
+
+    # Sitemaps catch anything the listings paginate past.
+    while queue and (limit is None or len(entries) < limit):
         url = queue.pop(0)
         if url in visited:
             continue
@@ -91,33 +132,26 @@ def discover_slugs(limit=None, verbose=True):
             continue
         if verbose:
             print(f"  discovered from {url}", file=sys.stderr)
-        take(body)
+        take_slugs(body)
         for child in re.findall(r"<loc>\s*([^<\s]+sitemap[^<\s]*)\s*</loc>", body, re.IGNORECASE):
             if child not in visited:
                 queue.append(child)
 
-    # Paginated listing pages, for anything the sitemaps miss.
-    page = 1
-    while limit is None or len(slugs) < limit:
-        before = len(slugs)
-        status, body, _via = rf.get(f"{rf.BASE}/?page={page}")
-        if status != 200 or not body.strip():
-            break
-        take(body)
-        if len(slugs) == before:
-            break
-        page += 1
-        if page > 100:
-            break
+    named = sum(1 for e in entries if e["name"])
+    if verbose:
+        print(f"  {len(entries)} styles, {named} with names", file=sys.stderr)
+    return entries[:limit] if limit else entries
 
-    return slugs[:limit] if limit else slugs
+
+def discover_slugs(limit=None, verbose=True):
+    return [e["slug"] for e in discover_entries(limit=limit, verbose=verbose)]
 
 
 # --------------------------------------------------------------------------
 # Indexing
 # --------------------------------------------------------------------------
 
-def summarize(slug, url, md):
+def summarize(slug, url, md, name="", tagline=""):
     """The searchable record for one style."""
     tokens = rt.parse(md)
     sections = rt.split_sections(md)
@@ -126,8 +160,10 @@ def summarize(slug, url, md):
     body = re.sub(r"\s+", " ", body).strip()
     return {
         "slug": slug,
+        "name": name,
+        "tagline": tagline,
         "url": url,
-        "title": title,
+        "title": name or title,
         "headings": [h for h in sections if h][:24],
         "colors": list(tokens["colors"].values())[:16],
         "color_names": list(tokens["colors"].keys())[:16],
@@ -162,10 +198,10 @@ def cmd_crawl(args):
     INDEX_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     print("discovering slugs…", file=sys.stderr)
-    slugs = discover_slugs(limit=args.limit)
-    todo = [s for s in slugs if s.lower() not in existing]
+    found = discover_entries(limit=args.limit)
+    todo = [e for e in found if e["slug"].lower() not in existing]
     print(
-        f"{len(slugs)} slugs found, {len(existing)} already indexed, {len(todo)} to fetch",
+        f"{len(found)} styles found, {len(existing)} already indexed, {len(todo)} to fetch",
         file=sys.stderr,
     )
     if not todo:
@@ -175,7 +211,8 @@ def cmd_crawl(args):
     counts = {"ok": 0, "fail": 0, "blocked": 0}
     handle = INDEX_PATH.open("a", encoding="utf-8")
 
-    def work(slug):
+    def work(entry):
+        slug = entry["slug"]
         url = rf.page_url(slug)
         if not allowed(url):
             with lock:
@@ -187,9 +224,11 @@ def cmd_crawl(args):
             if not md:
                 counts["fail"] += 1
                 if args.verbose:
-                    print(f"  miss {slug}", file=sys.stderr)
+                    print(f"  miss {entry.get('name') or slug}", file=sys.stderr)
                 return
-            handle.write(json.dumps(summarize(slug, source, md), ensure_ascii=False) + "\n")
+            handle.write(json.dumps(
+                summarize(slug, source, md, entry.get("name", ""), entry.get("tagline", "")),
+                ensure_ascii=False) + "\n")
             handle.flush()
             counts["ok"] += 1
             done = counts["ok"] + counts["fail"]
@@ -221,16 +260,24 @@ def score(entry, terms, hexes):
     """How well one indexed style answers the query."""
     total = 0
     slug = entry["slug"].lower()
+    name = entry.get("name", "").lower()
+    tagline = entry.get("tagline", "").lower()
     title = entry.get("title", "").lower()
     headings = " ".join(entry.get("headings", [])).lower()
     fonts = " ".join(entry.get("fonts", [])).lower()
     names = " ".join(entry.get("color_names", [])).lower()
     text = entry.get("text", "").lower()
 
-    if terms and " ".join(terms) == slug:
+    if terms and " ".join(terms) in (slug, name):
         total += 1200
 
     for term in terms:
+        if term == name:
+            total += 900
+        elif term in name:
+            total += 400
+        if term in tagline:
+            total += 200
         if term == slug:
             total += 800
         elif term in slug:
@@ -252,7 +299,8 @@ def score(entry, terms, hexes):
             total += 400
 
     # A style matching more of the query beats one matching a single term loudly.
-    matched = sum(1 for t in terms if t in slug or t in title or t in text or t in fonts)
+    matched = sum(1 for t in terms
+                  if t in slug or t in name or t in tagline or t in title or t in text or t in fonts)
     total += 90 * matched
     return total
 

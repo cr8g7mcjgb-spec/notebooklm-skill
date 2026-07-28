@@ -15,18 +15,24 @@ The values that ship are the values published. Not "inspired by", not rounded.
 
 ## Loop
 
+Style URLs are `/style/<uuid>` — the slug carries **no brand name**, so nothing can be
+found by guessing a URL. The index holds the name→uuid map. Crawl before first use.
+
 ```bash
-S=refero-styles/scripts
+S=.claude/skills/refero-styles/scripts
 
-# 1. pick — searches document contents, not slug spelling
-python3 $S/refero_index.py find "<mood | brand | font name | #hex>"
-python3 $S/refero_index.py crawl --limit 500     # first time only, one-off cost
+# 0. once — harvests names, taglines and documents
+python3 $S/refero_index.py crawl --limit 500
 
-# 2. pull — writes to disk, prints a path. Do NOT pass --full.
-python3 $S/refero_fetch.py fetch <slug> --asset all
+# 1. pick — matches names, taglines and document contents
+python3 $S/refero_index.py find "<brand | mood | font name | #hex>"
+
+# 2. pull — accepts a brand name or a uuid; writes to disk, prints a path.
+#    Do NOT pass --full: a real DESIGN.md runs ~28,000 characters.
+python3 $S/refero_fetch.py fetch Linear --asset all
 
 # 3. build from this, not from the document
-python3 $S/refero_tokens.py <cache>/<slug>.DESIGN.md --format brief
+python3 $S/refero_tokens.py <cache>/<name>.DESIGN.md --format brief
 ```
 
 Prefer the page's published `css` / `tailwind` / `tokens` block over re-parsing the
