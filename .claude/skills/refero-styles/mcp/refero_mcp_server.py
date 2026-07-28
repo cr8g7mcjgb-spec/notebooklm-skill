@@ -205,4 +205,13 @@ def refero_probe() -> str:
 
 
 if __name__ == "__main__":
-    mcp.run()
+    # stdio for a local Claude Code MCP server; streamable-http when hosting this
+    # as a claude.ai Connector, which needs a public HTTP endpoint.
+    #   MCP_TRANSPORT=streamable-http MCP_PORT=8000 python refero_mcp_server.py
+    transport = __import__("os").environ.get("MCP_TRANSPORT", "stdio")
+    if transport == "stdio":
+        mcp.run()
+    else:
+        mcp.settings.host = __import__("os").environ.get("MCP_HOST", "0.0.0.0")
+        mcp.settings.port = int(__import__("os").environ.get("MCP_PORT", "8000"))
+        mcp.run(transport=transport)

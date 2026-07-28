@@ -72,3 +72,12 @@ htmlcov/
 dist/
 build/
 *.egg-info/
+
+# Skills are committed with the repo; the ignores above are for local session state.
+# A parent directory must be re-included before anything inside it can be.
+!.claude/
+!.claude/skills/
+!.claude/skills/**
+
+# but never bytecode
+.claude/skills/**/__pycache__/
