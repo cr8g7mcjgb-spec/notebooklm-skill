@@ -1,79 +1,109 @@
 # Refero Styles Skill
 
-A Claude Code skill that finds the right DESIGN.md on
-[styles.refero.design](https://styles.refero.design) by itself, extracts it, and maps it
-onto the project's existing token layer — instead of the user browsing the site and
-pasting markdown into the chat.
+Every time you ask for something with a visual result — a page, a component, an artifact,
+a poster, a deck, a document — Claude looks up the matching DESIGN.md on
+[styles.refero.design](https://styles.refero.design) and builds the deliverable with
+**that document's exact published values**.
 
 Refero Styles is a public registry of design systems extracted from real product sites.
 Each entry ships a DESIGN.md: theme, color palette, typography, spacing, radius,
 elevation, layout, components, imagery, do/don't rules, and an agent prompt guide.
 
+The contract is fidelity. If the document says `#5E6AD2`, the output contains `#5E6AD2` —
+not a nearby default, not "inspired by". Step 6 of the skill greps the built file for the
+source values and reports any that went missing.
+
+Because the direction changes from request to request, the lookup runs **fresh every
+time**. A style used in the previous answer is never the default for the next one, and a
+failed lookup stops the build rather than falling back to an invented palette.
+
 ## Install
 
 ```bash
 cp -r refero-styles ~/.claude/skills/refero-styles     # user-wide
-# or, per project:
-cp -r refero-styles <project>/.claude/skills/refero-styles
+cp -r refero-styles <project>/.claude/skills/          # or per project
 ```
 
-The HTTP path is stdlib-only — no install step. `--render` (browser fallback for
-JS-hydrated pages and WAF-blocked requests) needs `patchright` or `playwright`:
+The HTTP path is stdlib-only. `--render` (browser fallback for JS-hydrated pages and
+WAF-blocked requests) needs `patchright` or `playwright`:
 
 ```bash
 pip install patchright && patchright install chrome
 ```
 
-The NotebookLM skill in this repo already ships patchright, so `.venv/bin/python` works
-as the interpreter for `--render` without installing anything else.
+The NotebookLM skill in this repo already ships patchright, so `.venv/bin/python` is a
+working interpreter for `--render` with nothing else to install.
+
+To make the lookup unmissable rather than merely likely, add one line to your `CLAUDE.md`:
+
+> When building anything visual, use the refero-styles skill to fetch a DESIGN.md and
+> apply its exact values.
 
 ## Usage
 
-Normally you just ask, and the skill triggers:
+Normally you just ask:
 
-> "make the landing page feel like Linear"
-> "미니멀한 에디토리얼 스타일로 바꿔줘"
-> "https://styles.refero.design/style/… 이 스타일 적용해줘"
+> "랜딩페이지 Linear 느낌으로 만들어줘"
+> "미니멀한 에디토리얼 스타일로 발표자료 만들어줘"
+> "https://styles.refero.design/style/… 이 스타일로"
 
 Directly:
 
 ```bash
-python3 scripts/refero_fetch.py search linear
+python3 scripts/refero_fetch.py search "minimal editorial"
 python3 scripts/refero_fetch.py fetch linear --save design/refero-linear.DESIGN.md
-python3 scripts/refero_fetch.py probe          # diagnostics
+python3 scripts/refero_tokens.py design/refero-linear.DESIGN.md --format css
+python3 scripts/refero_fetch.py probe            # diagnostics
 ```
 
-Fetched documents cache to `~/.claude/skills/refero-styles/cache/`
-(`REFERO_CACHE_DIR` overrides).
+`refero_tokens.py` emits `css` (`:root` variables), `tailwind` (v4 `@theme`), `json`,
+`python` (a dict for python-pptx / python-docx / matplotlib), or `summary` (what was
+recognised). Values are copied across untouched — no rounding, no substitution. Whatever
+the parser does not recognise is applied by reading the DESIGN.md directly, never guessed.
+
+Documents cache to `~/.claude/skills/refero-styles/cache/` (`REFERO_CACHE_DIR` overrides),
+keyed by slug — so the cache speeds up a repeat of the *same* style without ever
+short-circuiting the intent lookup for a new one.
+
+## MCP server
+
+For clients without skill support (Claude Desktop, Cursor, Zed):
+
+```bash
+pip install "mcp[cli]"
+claude mcp add refero-styles -- python /abs/path/refero-styles/mcp/refero_mcp_server.py
+```
+
+Tools: `refero_search`, `refero_design_md` (verbatim document), `refero_tokens`
+(css/tailwind/json/python), `refero_probe` (reachability).
 
 ## How it finds things
 
 Refero publishes no documented API, so nothing is hardcoded to one URL shape:
 
-1. **search** — tries `/?q=`, `/search?q=`, `/api/search?q=`, then falls back to
-   `sitemap.xml` / `llms.txt` and filters slugs by the query terms.
-2. **fetch** — tries `<page>.md`, `<page>/design.md`, `<page>/DESIGN.md`, then the HTML
-   page, extracting markdown from `__NEXT_DATA__`, app-router flight payloads, long
-   escaped inline-script strings, `<pre>`/`<code>`, and clipboard data attributes —
-   scoring candidates so page chrome never wins.
-3. On `403`/network refusal, replays the request through a real browser.
+1. **search** — `/?q=`, `/search?q=`, `/api/search?q=`, then `sitemap.xml` / `llms.txt`
+   filtered by the query terms, then WebSearch as a last resort.
+2. **fetch** — `<page>.md`, `<page>/design.md`, `<page>/DESIGN.md`, then the HTML page,
+   extracting markdown from `__NEXT_DATA__`, app-router flight payloads, long escaped
+   inline-script strings, `<pre>`/`<code>`, and clipboard attributes — scoring candidates
+   so page chrome never wins.
+3. On `403` or refusal, replays through a real browser.
 
-When the site redesigns, `probe` tells you which layer broke.
+`probe` tells you which layer broke when the site changes.
 
-## Alternatives
+## Network blocks
 
-- **MCP server** — a community `refero-styles-mcp-server` exists; it puts the same
-  lookup behind MCP tools. Heavier setup (a server per session), but no scraping code to
-  maintain if the maintainer keeps it current.
-- **WebSearch + WebFetch** — zero setup, works today: search
-  `site:styles.refero.design/style/ <brand>` and fetch the page. You get a model summary
-  of the document rather than the document, which is why this skill exists.
+If `probe` returns status `0` on every row, the **host's egress** is blocking the domain —
+common in sandboxed or remote environments, where the proxy denies CONNECT. An MCP server
+on the same host hits the same proxy, so it is not a workaround. Run from a machine with
+normal network access, or open the environment's network policy. A site-side WAF block is
+a different problem, and `--render` does solve that one.
 
 ## Caveats
 
-- Extraction is heuristic. Skim the saved file before applying it.
+- Extraction is heuristic. Skim the saved DESIGN.md before it ships.
 - A DESIGN.md describes a marketing/product site, not an app shell — dense product UI
-  needs adaptation.
-- Accessibility beats fidelity: contrast, focus states, and reduced-motion handling are
-  preserved even when the reference would break them.
-- This is design *direction*. Do not use it to clone a brand's identity.
+  needs decisions the reference does not make.
+- Accessibility beats fidelity in exactly one place: a contrast pair that fails WCAG AA is
+  adjusted, minimally, and the change is reported.
+- This is design *direction*. Do not reproduce a brand's logo, wordmark, or identity.

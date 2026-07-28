@@ -1,138 +1,168 @@
 ---
 name: refero-styles
-description: Find and apply a DESIGN.md from Refero Styles (styles.refero.design) — a public registry of 2,000+ design systems extracted from real product sites, each with colors, typography, spacing, radius, elevation, components, and do/don't rules. Use when the user wants a visual direction for a UI and names a reference ("make it look like Linear/Stripe/Vercel", "이 사이트 스타일로", "레퍼런스 디자인 가져와"), describes a mood ("minimal", "editorial", "high contrast", "미니멀하게", "감성적으로"), mentions Refero / DESIGN.md / refero styles, or shares a styles.refero.design URL. Not for editing an existing design system the project already owns.
+description: Fetch a DESIGN.md from Refero Styles (styles.refero.design) and build the deliverable with its exact published values. Use whenever creating or restyling anything with a visual result — a web page, landing page, UI component, dashboard, artifact, poster, chart, slide deck (pptx), document (docx), PDF, or README — and especially when the request names a style direction, whether a brand ("Linear 느낌으로", "like Stripe"), a mood ("minimal", "editorial", "high contrast", "미니멀하게", "감성적으로", "고급스럽게"), or a styles.refero.design URL. Also use for "디자인 md 가져와", "레퍼런스대로 만들어", "저 사이트에서 찾아서". Look the style up fresh on every such request — the wanted direction changes each time and must never be carried over from a previous answer.
 ---
 
-# Refero Styles → DESIGN.md
+# Refero Styles → deliverable, verbatim
 
-Turn "make it look like X" into a concrete token set the codebase can actually use.
-Refero Styles publishes a DESIGN.md per site — theme, color palette, typography, spacing,
-radius, elevation, layout, components, imagery, do/don't rules, and an agent prompt guide.
-This skill finds the right one and applies it, so the user never copy-pastes markdown.
+Refero Styles publishes a DESIGN.md per site: theme, color palette, typography, spacing,
+radius, elevation, layout, components, imagery, do/don't rules, agent prompt guide.
 
-## When to Use
+This skill's contract: **the values that ship in the deliverable are the values published
+in the DESIGN.md.** Not "inspired by". Not rounded to a nearby scale. Not substituted for
+a default palette. If the document says `#5E6AD2`, the output contains `#5E6AD2`.
 
-Trigger when the user:
-- Names a reference product/brand for visual direction ("Linear 느낌으로", "like Stripe's site")
-- Describes a mood instead of a brand ("minimal", "editorial", "playful", "high contrast")
-- Mentions Refero, Refero Styles, or DESIGN.md
-- Shares a `https://styles.refero.design/...` URL
+## Trigger
 
-Do **not** trigger when the project already has its own design system and the user is
-editing it — that is ordinary styling work, not a reference lookup.
+Run this whenever the request produces something with a visual result — HTML, a React or
+Vue component, a Tailwind page, an artifact, a poster, a chart, a `.pptx`, a `.docx`, a
+PDF — **and** the request carries any style direction at all.
 
-## Workflow
+Skip it only when the user explicitly says not to use a reference, or when the project's
+own design system is the subject of the edit.
 
-### Step 1 — Resolve the reference
+## The loop — run it every time
 
-Turn the request into either a **brand slug** or **mood keywords**. If the user gave a
-Refero URL, skip to Step 2 with that URL.
+The wanted direction changes from request to request. Treat each request as a fresh
+lookup. Three rules, in priority order:
+
+1. **Never reuse the previous request's style.** Re-derive the intent from *this*
+   message. A style used ten minutes ago is not the default for the next deliverable.
+2. **Never invent a palette.** If the lookup fails, say so and stop — do not fall back to
+   a made-up "minimal" palette and present it as the reference.
+3. **Never paraphrase values.** Copy them.
+
+### Step 1 — Derive the style intent from this request
+
+Pull out whichever the user gave:
+
+| They said | Search with |
+|---|---|
+| A brand — "Linear 느낌", "like Stripe" | the brand name |
+| A mood — "미니멀", "editorial", "고급스럽게", "high contrast" | the mood words, in English |
+| A refero URL | skip to Step 2 with that URL |
+| Nothing explicit, but a visual deliverable | infer 2–3 mood words from the content and purpose |
+
+### Step 2 — Find the style page
 
 ```bash
 python3 refero-styles/scripts/refero_fetch.py search linear
-python3 refero-styles/scripts/refero_fetch.py search "minimal editorial"
+python3 refero-styles/scripts/refero_fetch.py search "minimal editorial warm"
 ```
 
-Output is `slug<TAB>url`, one candidate per line. If more than one plausibly matches
-what the user asked for, ask the user which — do not silently pick.
+Output is `slug<TAB>url`. Take the top match and keep going — state which slug you used so
+the user can redirect. Only ask when the top candidates are genuinely different
+directions and picking wrong would waste the whole build.
 
-If `search` finds nothing, fall back to the WebSearch tool:
-`site:styles.refero.design/style/ <brand>`.
+If `search` returns nothing, fall back to WebSearch: `site:styles.refero.design/style/ <query>`.
 
-### Step 2 — Pull the DESIGN.md
+### Step 3 — Pull the DESIGN.md, verbatim
 
 ```bash
-# by slug, or by full URL
-python3 refero-styles/scripts/refero_fetch.py fetch linear --full
-python3 refero-styles/scripts/refero_fetch.py fetch https://styles.refero.design/style/linear --full
-
-# save straight into the project instead of the cache
-python3 refero-styles/scripts/refero_fetch.py fetch linear --save design/refero-linear.DESIGN.md
+python3 refero-styles/scripts/refero_fetch.py fetch <slug> \
+  --save design/refero-<slug>.DESIGN.md --full
 ```
 
-The site is JS-rendered and sits behind a WAF. If plain HTTP is refused the script
-retries through a real browser automatically; force it with `--render`, and add
-`--show-browser` when debugging. `probe` reports which endpoints are reachable at all:
+Read the saved file. It — not your memory of it — is the source of truth.
+
+If plain HTTP is refused the script retries through a real browser; force with `--render`,
+and use this repo's venv interpreter when patchright is needed:
 
 ```bash
-python3 refero-styles/scripts/refero_fetch.py probe
+.venv/bin/python refero-styles/scripts/refero_fetch.py fetch <slug> --render
 ```
 
-`--render` needs patchright or playwright. This repo's NotebookLM venv already has
-patchright, so run it with that interpreter when the plain HTTP path is blocked:
+### Step 4 — Turn it into tokens
 
 ```bash
-.venv/bin/python refero-styles/scripts/refero_fetch.py fetch linear --render
+python3 refero-styles/scripts/refero_tokens.py design/refero-<slug>.DESIGN.md --format css
+#   --format tailwind   Tailwind v4 @theme block
+#   --format json       structured tokens
+#   --format python     dict for python-pptx / python-docx / matplotlib
+#   --format summary    what was recognised
 ```
 
-WebFetch on the style URL is a valid alternative when the script is unavailable — but
-prefer the script, since it saves the full document instead of a model summary.
+The emitter copies values across untouched. It is an accelerator, not an authority —
+anything it did not recognise (`summary` shows the counts) you apply by reading the
+DESIGN.md yourself. Never let a parser gap become a guessed value.
 
-### Step 3 — Read the project before writing anything
+### Step 5 — Build with those tokens
 
-Never apply tokens blind. First establish what the project already uses:
+| Deliverable | How the tokens land |
+|---|---|
+| HTML page / artifact | `--format css` into a `:root` block; every rule references `var(--…)` |
+| React / Tailwind v4 | `--format tailwind` into the CSS entry; use the generated utilities |
+| React / CSS-in-JS | `--format json`, imported as the theme object |
+| `.pptx` (python-pptx) | `--format python`; hexes → `RGBColor.from_string`, sizes → `Pt` |
+| `.docx` (python-docx) | `--format python`; styles set from the same dict |
+| Poster / chart / canvas | `--format json`; palette drives the fills and the type scale the labels |
+| Existing codebase | Put the **exact** values into the project's existing token names — the naming is local, the values are the reference's |
 
-- Tailwind (`tailwind.config.*`, `@theme` in CSS) vs. plain CSS variables vs. CSS-in-JS
-- Where the existing palette/type scale lives
-- Whether a dark theme exists
+Also carry across what is not a token: the DESIGN.md's layout notes, component sizing,
+imagery direction, and do/don't rules are part of the reference.
 
-The DESIGN.md is a **reference**, not a drop-in file. It describes another product's
-site; the local naming and structure win.
+### Step 6 — Verify the values actually shipped
 
-### Step 4 — Map, don't paste
+This is the step that makes "그대로" true rather than claimed. Before reporting done:
 
-Translate the reference into the project's own token layer:
+```bash
+# every source color must appear in the output
+grep -oiE '#[0-9a-f]{6}' design/refero-<slug>.DESIGN.md | sort -u > /tmp/want.txt
+grep -oiE '#[0-9a-f]{6}' <built-file> | sort -u > /tmp/got.txt
+comm -23 /tmp/want.txt /tmp/got.txt      # in the reference, missing from the build
+```
 
-- Colors → existing semantic names (`--color-primary`, `bg-brand`), not raw hexes at call sites
-- Typography → the project's existing scale steps, keeping its font loading strategy
-- Spacing / radius / elevation → the project's scale, rounded to steps it already has
-- Components → adjust the components that exist; do not introduce a component library
+For binary outputs (`.pptx`, `.docx`, `.pdf`) run the check against the generation script.
+Some misses are legitimate — a color the layout had no use for. An unexplained miss is a
+bug: fix it rather than reporting success.
 
-Keep the reference file in the repo (`design/refero-<slug>.DESIGN.md`) so later sessions
-can see where the direction came from.
+### Step 7 — Report
 
-### Step 5 — Preserve what the reference cannot know
+Name the slug, the source URL, and the saved DESIGN.md path. Then state anything you did
+**not** apply verbatim and why — the only two acceptable reasons being a contrast pair
+that fails accessibility, or a value the document simply does not specify.
 
-The DESIGN.md has no knowledge of this app's users or a11y baseline. Non-negotiable:
+## Accessibility — the one place fidelity yields
 
-- Contrast stays at WCAG AA or whatever the project already meets — if a reference pair
-  fails, darken/lighten to pass and say so
-- Focus states, hit targets, and reduced-motion handling survive
-- Do not change semantics, ARIA, or DOM structure to chase a look
+Copy the values exactly, except where a foreground/background pair from the reference
+fails WCAG AA at its used size. Adjust the minimum necessary, keep every other value
+untouched, and say which pair you changed and to what. Focus states, hit targets, and
+reduced-motion handling survive regardless.
 
-### Step 6 — Report
-
-State the slug used, the source URL, which tokens changed, and anything from the
-reference you deliberately did not apply (and why).
-
-## Command Reference
+## Command reference
 
 | Command | Purpose |
 |---|---|
-| `search <query> [--limit N]` | Candidate style pages for a brand or mood |
-| `fetch <slug\|url> [--save PATH] [--full]` | Extract and store one DESIGN.md |
-| `probe` | Report endpoint reachability (diagnostics) |
+| `refero_fetch.py search <query> [--limit N]` | Candidate style pages |
+| `refero_fetch.py fetch <slug\|url> [--save P] [--full]` | Extract one DESIGN.md |
+| `refero_fetch.py probe` | Endpoint reachability (diagnostics) |
+| `refero_tokens.py <file> --format <fmt>` | css / tailwind / json / python / summary |
 | `--render` / `--show-browser` | Route through a real browser |
 
-Fetched documents are cached at `~/.claude/skills/refero-styles/cache/<slug>.DESIGN.md`
-(override with `REFERO_CACHE_DIR`). Check the cache before refetching.
+Fetched documents cache to `~/.claude/skills/refero-styles/cache/` (`REFERO_CACHE_DIR`
+overrides). The cache is keyed by slug, so it never short-circuits Step 1 — a new request
+still derives its own intent and may resolve to a different slug.
+
+## MCP alternative
+
+`mcp/refero_mcp_server.py` exposes `refero_search`, `refero_design_md`, `refero_tokens`,
+and `refero_probe` for clients without skill support. See the README.
 
 ## Troubleshooting
 
-| Problem | Cause | Fix |
+| Symptom | Cause | Fix |
 |---|---|---|
-| `probe` shows status `0` on every row | Network policy blocks the domain (sandboxed/remote envs deny CONNECT) | Run from a machine with normal egress; nothing in the skill can work around a proxy denial |
-| `403` on every URL | WAF rejecting the request | `--render` |
-| `200` but "Could not extract a DESIGN.md" | Markdown only exists after hydration, or the page markup changed | `--render`; if it still fails the extraction heuristics need updating — see `_candidates_from_html` |
-| `search` returns nothing | The `?q=` endpoint changed shape | Falls back to `sitemap.xml` automatically; then to WebSearch `site:styles.refero.design/style/` |
-| `--render` says patchright not importable | No browser lib on the interpreter | Use `.venv/bin/python`, or `pip install patchright && patchright install chrome` |
+| `probe` shows `0` on every row | The host's egress blocks the domain (sandboxed/remote envs deny CONNECT) | Run where the network is open. An MCP server on the same host is blocked identically — it is not a way around this |
+| `403` everywhere | WAF rejecting the request | `--render` |
+| `200` but no DESIGN.md extracted | Markdown only exists post-hydration, or the markup changed | `--render`; then update `_candidates_from_html` |
+| `search` empty | The `?q=` endpoint changed | Auto-falls back to `sitemap.xml`, then WebSearch |
+| Few tokens in `summary` | Document uses a shape the parser misses | Apply the DESIGN.md by hand — do not guess |
+| `--render` says patchright missing | No browser lib | `.venv/bin/python`, or `pip install patchright && patchright install chrome` |
 
-## Limitations
+## Limits
 
-- Refero publishes no documented public API. `search`/`fetch` probe candidate URL shapes
-  and parse the page; a site redesign can break extraction. `probe` tells you which layer
-  broke.
-- A DESIGN.md describes a **marketing/product site**, not an app shell. Dense product UI
-  (tables, dashboards) needs adaptation beyond what the reference specifies.
-- Extraction is heuristic — always skim the saved file before applying it.
-- Respect the source: this is design *direction*, not permission to clone a brand.
+- Refero publishes no documented API; `search`/`fetch` probe URL shapes and parse pages.
+  A redesign can break extraction — `probe` isolates which layer.
+- A DESIGN.md describes a marketing/product site. Dense product UI (tables, dashboards)
+  needs decisions the reference does not make; make them, and say which were yours.
+- This is design direction. Do not reproduce a brand's logo, wordmark, or identity.
