@@ -130,7 +130,7 @@ def _unescape_js_string(s):
 
 def _markdown_score(text):
     """How much does this string look like a DESIGN.md rather than page chrome?"""
-    if not text or len(text) < 200:
+    if not text or len(text) < 100:
         return 0
     score = 0
     score += 30 * len(re.findall(r"^#{1,3} \S", text, re.MULTILINE))
@@ -287,7 +287,11 @@ def extract_asset(body, asset="design-md", content_is_raw=False):
     is never mistaken for the markdown or vice versa.
     """
     scorer = ASSET_SCORERS[asset]
-    if content_is_raw or ("<html" not in body[:2000].lower() and scorer(body) > 300):
+    # A body that is not a web page is the asset itself — accept it on any positive
+    # signal rather than the threshold tuned for picking blobs out of page chrome.
+    if content_is_raw and scorer(body) > 0:
+        return body.strip()
+    if "<html" not in body[:2000].lower() and scorer(body) > 300:
         return body.strip()
     best, best_score = None, 0
     for cand in _candidates_from_html(body):
@@ -344,8 +348,9 @@ def fetch_asset(target, asset, render=False, show_browser=False):
         tried.append(f"  {status:>3} {via:<6} {url}")
         if status != 200 or not body.strip():
             continue
-        is_direct = not url.rstrip("/").endswith(page_url(target).rstrip("/"))
-        content = extract_asset(body, asset, content_is_raw=is_direct and _looks_raw(body))
+        # Raw-vs-page is decided by the body, not the URL: the page URL itself can
+        # serve the bare document under content negotiation.
+        content = extract_asset(body, asset, content_is_raw=_looks_raw(body))
         if content:
             return content, url, via
     return None, None, "\n".join(tried)

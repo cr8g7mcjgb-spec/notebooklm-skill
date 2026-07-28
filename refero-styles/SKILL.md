@@ -45,16 +45,36 @@ Pull out whichever the user gave:
 
 ### Step 2 — Find the style page
 
+The site publishes thousands of open DESIGN.md documents. Which one fits "warm editorial
+serif" is decided by what is *inside* those documents, not by slug spelling — so search the
+crawled index first.
+
 ```bash
-python3 refero-styles/scripts/refero_fetch.py search linear
-python3 refero-styles/scripts/refero_fetch.py search "minimal editorial warm"
+# content search over the local index — handles moods, font names, hex colors
+python3 refero-styles/scripts/refero_index.py find "warm editorial serif magazine"
+python3 refero-styles/scripts/refero_index.py find "Playfair Display"
+python3 refero-styles/scripts/refero_index.py find "#C8A96A"
+
+# no index yet? build one (resumable, robots-aware), then search it
+python3 refero-styles/scripts/refero_index.py crawl --limit 500
+python3 refero-styles/scripts/refero_index.py stats
 ```
 
-Output is `slug<TAB>url`. Take the top match and keep going — state which slug you used so
-the user can redirect. Only ask when the top candidates are genuinely different
-directions and picking wrong would waste the whole build.
+If no index exists and building one is not worth it for this request, fall back to the live
+lookup — which matches on slug, so it only works when the user named a brand:
 
-If `search` returns nothing, fall back to WebSearch: `site:styles.refero.design/style/ <query>`.
+```bash
+python3 refero-styles/scripts/refero_fetch.py search linear
+```
+
+Last resort, WebSearch: `site:styles.refero.design/style/ <query>`.
+
+Output is `slug<TAB>url`. Take the top match and keep going — state which slug you used so
+the user can redirect. Only ask when the top candidates are genuinely different directions
+and picking wrong would waste the whole build.
+
+**The index selects; it never supplies.** It holds a snapshot for ranking. The chosen style
+is always fetched live in Step 3, so the values that ship are the current ones.
 
 ### Step 3 — Pull what the page publishes, verbatim
 
@@ -177,7 +197,10 @@ private Refero access unless an MCP server is actually configured in the session
 
 | Command | Purpose |
 |---|---|
-| `refero_fetch.py search <query> [--limit N]` | Candidate style pages |
+| `refero_index.py crawl [--limit N] [--refresh]` | Discover and index every public style |
+| `refero_index.py find <query> [--verbose]` | Rank the index by content — moods, fonts, hexes |
+| `refero_index.py stats` | What the index holds |
+| `refero_fetch.py search <query> [--limit N]` | Live slug lookup when no index exists |
 | `refero_fetch.py fetch <slug\|url> --asset <a>` | Published output: `design-md`, `css`, `tailwind`, `tokens`, `all` |
 | `refero_fetch.py probe` | Endpoint reachability (diagnostics) |
 | `refero_tokens.py <file> --format <fmt>` | css / tailwind / json / python / summary |

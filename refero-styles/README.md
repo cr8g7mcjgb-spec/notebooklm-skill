@@ -50,7 +50,8 @@ Normally you just ask:
 Directly:
 
 ```bash
-python3 scripts/refero_fetch.py search "minimal editorial"
+python3 scripts/refero_index.py crawl --limit 500      # index the open DESIGN.md corpus
+python3 scripts/refero_index.py find "warm editorial serif" --verbose
 python3 scripts/refero_fetch.py fetch linear --asset all
 python3 scripts/refero_fetch.py fetch linear --asset design-md --save design/refero-linear.DESIGN.md
 python3 scripts/refero_tokens.py design/refero-linear.DESIGN.md --format css
@@ -82,16 +83,44 @@ pip install "mcp[cli]"
 claude mcp add refero-styles -- python /abs/path/refero-styles/mcp/refero_mcp_server.py
 ```
 
-Tools: `refero_search`, `refero_design_md` (verbatim document), `refero_asset` (published
+Tools: `refero_find` (index-ranked search), `refero_search` (live), `refero_design_md`
+(verbatim document), `refero_asset` (published
 css / tailwind / tokens block), `refero_tokens`
 (css/tailwind/json/python), `refero_probe` (reachability).
+
+## Crawling the open corpus
+
+The site publishes thousands of open DESIGN.md documents. Which one fits "warm editorial
+serif" is decided by what is inside them, not by slug spelling — so `refero_index.py`
+crawls them into a local index and searches that.
+
+```bash
+python3 scripts/refero_index.py crawl               # everything
+python3 scripts/refero_index.py crawl --limit 500   # or a slice
+python3 scripts/refero_index.py find "luxury gold premium elegant" --verbose
+python3 scripts/refero_index.py stats
+```
+
+The crawler discovers slugs from `sitemap.xml` (following sitemap indexes), `llms.txt`, and
+paginated listing pages; **reads and honours `robots.txt`**; identifies itself with a real
+User-Agent; runs 4 workers with a 0.5s delay per fetch (`--workers`, `--delay`); and appends
+JSONL as it goes, so an interrupted crawl resumes on re-run instead of starting over.
+`--refresh` rebuilds from scratch.
+
+`find` ranks on slug, title, headings, font names, color names, hex values and body text,
+so mood words, a font name, or a hex code all work as queries — including mixed-language
+ones.
+
+**The index selects; it never supplies.** It is a snapshot used for ranking. The chosen
+style is always re-fetched live before anything is built, so shipped values are current.
 
 ## How it finds things
 
 Refero publishes no documented API, so nothing is hardcoded to one URL shape:
 
 1. **search** — `/?q=`, `/search?q=`, `/api/search?q=`, then `sitemap.xml` / `llms.txt`
-   filtered by the query terms, then WebSearch as a last resort.
+   filtered by the query terms, then WebSearch as a last resort. `refero_index.py find` is
+   better whenever an index exists, since it matches content rather than slugs.
 2. **fetch** — direct file URLs for the requested asset first (`<page>.md`,
    `<page>/variables.css`, `<page>/tokens.json`, …), then the HTML page, extracting from
    `__NEXT_DATA__`, app-router flight payloads, nested token objects, long escaped

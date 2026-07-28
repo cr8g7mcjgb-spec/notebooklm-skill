@@ -6,9 +6,12 @@ Exposes the same lookup the skill uses as MCP tools, so clients without skill
 support (Claude Desktop, Cursor, Zed, …) can pull a DESIGN.md too.
 
 Tools:
-    refero_search(query, limit)        find style pages for a brand or mood
+    refero_find(query, limit)          rank the crawled index by content (preferred)
+    refero_search(query, limit)        live lookup when no index exists
     refero_design_md(style, render)    the DESIGN.md, verbatim
-    refero_tokens(style, format)       parsed tokens as css / tailwind / json
+    refero_asset(style, asset)         a published css / tailwind / tokens block
+    refero_tokens(style, format)       tokens as css / tailwind / json / python
+    refero_probe()                     endpoint reachability
 
 Run:
     pip install "mcp[cli]"
@@ -22,6 +25,7 @@ network policy: if the host's egress blocks styles.refero.design, the server is
 blocked too, and `refero_probe` will say so.
 """
 
+import re
 import sys
 from pathlib import Path
 
@@ -29,6 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 
 import argparse  # noqa: E402
 import refero_fetch  # noqa: E402
+import refero_index as index_lib  # noqa: E402
 import refero_tokens as tokens_lib  # noqa: E402
 
 try:
@@ -69,6 +74,40 @@ def refero_search(query: str, limit: int = 10) -> str:
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         code = refero_fetch.cmd_search(args)
     return out.getvalue() if code == 0 else f"No results.\n{err.getvalue()}"
+
+
+@mcp.tool()
+def refero_find(query: str, limit: int = 5) -> str:
+    """Rank locally indexed styles against a free-form description.
+
+    Args:
+        query: what the design should feel like — mood words, a font name, or a
+               hex color ("warm editorial serif", "Playfair Display", "#C8A96A")
+        limit: how many candidates to return
+
+    Searches the crawled index, so it matches on document content rather than on
+    slug spelling. Prefer this over refero_search whenever an index exists; build
+    one with `refero_index.py crawl`. Always fetch the chosen style live afterward.
+    """
+    index = index_lib.load_index()
+    if not index:
+        return (
+            f"No index yet at {index_lib.INDEX_PATH}. Build one with:\n"
+            "  python3 refero-styles/scripts/refero_index.py crawl --limit 500\n"
+            "Until then, use refero_search."
+        )
+    q = query.lower()
+    hexes = {h.lower() for h in re.findall(r"#[0-9a-fA-F]{6}", q)}
+    terms = [t for t in re.split(r"[^a-z0-9#]+", q) if t and t not in index_lib.STOPWORDS]
+    ranked = sorted(((index_lib.score(e, terms, hexes), e) for e in index), reverse=True,
+                    key=lambda p: p[0])
+    hits = [(s, e) for s, e in ranked if s > 0][:limit]
+    if not hits:
+        return f"Nothing among {len(index)} indexed styles matches {query!r}."
+    return "\n".join(
+        f"{e['slug']}\t{e['url']}\t{e['title']}\t{','.join(e.get('colors', [])[:5])}"
+        for _s, e in hits
+    )
 
 
 @mcp.tool()
