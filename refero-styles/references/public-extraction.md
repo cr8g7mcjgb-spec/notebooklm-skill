@@ -82,6 +82,55 @@ Check that you have all of these before building; a gap here becomes an invented
 Anything genuinely absent from the page is a decision you make, and it must be reported as
 yours rather than presented as part of the reference.
 
+## Commands
+
+| Command | Purpose |
+|---|---|
+| `refero_index.py crawl [--limit N] [--refresh]` | Discover and index every public style |
+| `refero_index.py find <query> [--verbose]` | Rank the index by content — moods, fonts, hexes |
+| `refero_index.py stats` | What the index holds |
+| `refero_fetch.py search <query>` | Live slug lookup when no index exists |
+| `refero_fetch.py fetch <slug\|url> --asset <a>` | `design-md`, `css`, `tailwind`, `tokens`, `all` |
+| `refero_fetch.py probe` | Endpoint reachability |
+| `refero_tokens.py <file> --format <f>` | `brief`, `css`, `tailwind`, `json`, `python`, `summary` |
+| `--render` / `--show-browser` | Route through a real browser |
+
+Cache lives at `~/.claude/skills/refero-styles/cache/` (`REFERO_CACHE_DIR` overrides).
+
+## Context cost
+
+Measured on a realistic 3KB DESIGN.md. Build from `brief` plus the emitted CSS; reach for
+the document only when a specific rule is needed.
+
+| Path | Cost |
+|---|---|
+| `fetch` (default) | ~8 tokens |
+| `--format brief` | ~170 tokens |
+| `--format css` | ~195 tokens |
+| `fetch --full` | ~765 tokens |
+
+Crawling is a one-time cost paid outside the conversation. No API keys, no paid services,
+no third-party endpoints — plain HTTPS, stdlib only.
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `probe` shows `0` on every row | Host egress blocks the domain | Run where the network is open. An MCP server on the same host is blocked identically |
+| `403` everywhere | WAF rejecting the request | `--render` |
+| `200` but nothing extracted | Content only exists post-hydration, or markup changed | `--render`; then update `_candidates_from_html` |
+| `search` empty | Slug does not carry the query words | Use `refero_index.py find` |
+| Few tokens in `summary` | Document shape the parser misses | Apply the DESIGN.md by hand — do not guess |
+| `--render` says patchright missing | No browser lib | `.venv/bin/python`, or `pip install patchright && patchright install chrome` |
+
+## Limits
+
+- Refero publishes no documented API; commands probe URL shapes and parse pages. A
+  redesign can break extraction — `probe` isolates which layer.
+- A DESIGN.md describes a marketing/product site. Dense product UI needs decisions the
+  reference does not make; make them, and say which were yours.
+- This is design direction. Do not reproduce a brand's logo, wordmark, or identity.
+
 ## Prior art
 
 Other people have solved parts of this. What was taken from each, and what was not:

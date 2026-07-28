@@ -21,6 +21,21 @@ comm -13 /tmp/want.txt /tmp/got.txt   # in the build, absent from the reference 
 The second list should be empty. For `.pptx` / `.docx` / `.pdf`, run the check against the
 generation script instead of the binary.
 
+## 1b. How tokens land, per deliverable
+
+| Deliverable | How the tokens land |
+|---|---|
+| HTML page / artifact | `--asset css`, or `--format css` into `:root`; rules reference `var(--…)` |
+| React / Tailwind v4 | `--asset tailwind` into the CSS entry; use the generated utilities |
+| React / CSS-in-JS | `--asset tokens`, or `--format json`, imported as the theme object |
+| `.pptx` (python-pptx) | `--format python`; hexes → `RGBColor.from_string`, sizes → `Pt` |
+| `.docx` (python-docx) | `--format python`; styles set from the same dict |
+| Poster / chart / canvas | `--format json`; palette drives fills, type scale drives labels |
+| Existing codebase | The exact values under the project's existing token names |
+
+Carry across what is not a token too: layout notes, component sizing, imagery direction
+and do/don't rules are part of the reference.
+
 ## 2. Fonts that cannot be loaded
 
 If the reference's family is unavailable to the app, pick the closest local or web-safe
